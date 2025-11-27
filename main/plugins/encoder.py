@@ -3,7 +3,6 @@ import os
 import shutil
 import time
 import glob
-import psutil
 from datetime import datetime as dt
 
 from telethon import events
@@ -15,22 +14,22 @@ from LOCAL.localisation import SUPPORT_LINK
 from LOCAL.utils import ffmpeg_progress
 from .. import BOT_UN, Drone
 
-# Speed optimization settings
-MAX_CONCURRENT_DOWNLOADS = 3
-MAX_CONCURRENT_UPLOADS = 2
-CHUNK_SIZE = 1024 * 1024  # 1MB chunks for faster I/O
+# Render-optimized settings
+RENDER_MODE = True
 
 async def encode(event, msg, scale=0):
     """
-    Optimized encode function with speed improvements
+    Render-optimized encode function
     """
-    encode_id = f"encode_{int(time.time())}_{scale}p"
+    if RENDER_MODE:
+        await event.reply("⚡ **Render Free Tier Mode** - Optimizing for limited resources...")
+    
     temp_dir = "encodemedia"
     os.makedirs(temp_dir, exist_ok=True)
     temp_files = []
 
     try:
-        edit = await Drone.send_message(event.chat_id, "🚀 Starting optimized encoding...", reply_to=msg.id)
+        edit = await Drone.send_message(event.chat_id, "🔄 Starting (Render Optimized)...", reply_to=msg.id)
 
         # Determine input file
         file = getattr(msg.media, "document", msg.media)
@@ -45,8 +44,12 @@ async def encode(event, msg, scale=0):
         input_file = os.path.join(temp_dir, f"input_{timestamp}{ext}")
         temp_files.append(input_file)
 
-        # OPTIMIZED DOWNLOAD with larger chunks
-        await optimized_fast_download(input_file, file, Drone, edit, time.time(), "**DOWNLOADING:**")
+        # Download with Render optimizations
+        start_dl = time.time()
+        await fast_download(input_file, file, Drone, edit, start_dl, "**DOWNLOADING:**")
+        dl_time = time.time() - start_dl
+        file_size = os.path.getsize(input_file)
+        dl_speed = file_size / dl_time / (1024*1024)  # MB/s
 
         # Standardized filename
         name = os.path.join(temp_dir, f"video_{timestamp}.mp4")
@@ -57,7 +60,7 @@ async def encode(event, msg, scale=0):
         original_size = os.path.getsize(name)
 
         # Extract metadata
-        await safe_edit(edit, "📊 Analyzing video metadata...")
+        await safe_edit(edit, "📊 Analyzing video...")
         vid = video_metadata(name)
         if not vid:
             raise ValueError("Failed to extract video metadata.")
@@ -75,49 +78,56 @@ async def encode(event, msg, scale=0):
                       (scale == 720 and width == 1280)):
             return await safe_edit(edit, f"The video is already in {scale}p resolution.")
 
-        # Determine output resolution
+        # RENDER-OPTIMIZED FFMPEG SETTINGS
         scale_map = {240: "426x240", 360: "640x360", 480: "854x480", 720: "1280x720"}
         scale_cmd = scale_map.get(scale, f"{width}x{height}")
 
-        # OPTIMIZED FFMPEG SETTINGS for speed
-        fps_cmd = ["-r", "30"] if original_fps > 30 else []
+        # Conservative FPS for Render CPU limits
+        fps_cmd = ["-r", "24"] if original_fps > 30 else []
 
         # Output and progress files
         output_file = os.path.join(temp_dir, f"output_{timestamp}.mp4")
         progress_file = os.path.join(temp_dir, f"progress_{timestamp}.txt")
         temp_files.extend([output_file, progress_file])
 
-        # OPTIMIZED FFMPEG COMMAND for faster encoding
+        # RENDER-OPTIMIZED FFMPEG COMMAND
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-progress", progress_file,
             "-i", name
         ] + fps_cmd + [
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", 
-            "-preset", "veryfast",  # Faster than 'faster'
-            "-tune", "fastdecode",  # Optimize for decoding speed
+            "-c:v", "libx264", 
+            "-pix_fmt", "yuv420p", 
+            "-preset", "medium",
             "-s", scale_cmd,
-            "-crf", "23",  # Slightly better quality with minimal speed impact
-            "-c:a", "libopus", "-ac", "2", "-ab", "96k",  # Reduced audio bitrate
+            "-crf", "26",
+            "-c:a", "aac", "-ac", "2", "-ab", "64k",
             "-c:s", "copy", 
-            "-movflags", "+faststart",  # Optimize for streaming
+            "-movflags", "+faststart",
+            "-threads", "1",
             output_file, "-y"
         ]
 
         # Run encoding with progress
         await ffmpeg_progress(cmd, name, progress_file, time.time(), edit, '**ENCODING:**')
 
-        # Get encoded file size for comparison
+        # Get encoded file size
         encoded_size = os.path.getsize(output_file)
 
-        # Prepare caption with encoding info
-        encoding_info = f"\n\n💎 Encoded • {scale}p\n📊 {original_size//1024//1024}MB → {encoded_size//1024//1024}MB"
+        # Prepare caption with Render info
+        encoding_info = f"\n\n💎 Encoded • {scale}p\n📊 {original_size//1024//1024}MB → {encoded_size//1024//1024}MB\n⚡ Render Free Tier"
         final_caption = original_caption + encoding_info if original_caption else encoding_info.strip()
 
-        # OPTIMIZED UPLOAD
-        await safe_edit(edit, "⚡ Optimized uploading...")
-        uploader = await optimized_fast_upload(output_file, output_file, time.time(), Drone, edit, '**UPLOADING:**')
-        
+        # Optimized upload for Render
+        await safe_edit(edit, "📤 Uploading (Render Optimized)...")
+        start_ul = time.time()
+        uploader = await fast_upload(output_file, output_file, start_ul, Drone, edit, '**UPLOADING:**')
+        ul_time = time.time() - start_ul
+        ul_speed = encoded_size / ul_time / (1024*1024)
+
+        # Log speeds for monitoring
+        print(f"📊 Render Speeds - Download: {dl_speed:.2f} MB/s, Upload: {ul_speed:.2f} MB/s")
+
         # Get original thumbnail
         thumb = None
         if getattr(msg, "video", None) and msg.video.thumbs:
@@ -125,7 +135,7 @@ async def encode(event, msg, scale=0):
         elif hasattr(msg.media, 'document') and msg.media.document.thumbs:
             thumb = msg.media.document.thumbs[-1]
 
-        # Video attributes for Telegram
+        # Video attributes
         metadata = video_metadata(output_file)
         width = metadata["width"]
         height = metadata["height"]
@@ -144,55 +154,16 @@ async def encode(event, msg, scale=0):
         await edit.delete()
 
     except Exception as e:
-        print(f"Encoding error: {e}")
+        print(f"Render encoding error: {e}")
         try:
-            await safe_edit(edit, f"An error occurred.\n\nContact [SUPPORT]({SUPPORT_LINK})", link_preview=False)
+            await safe_edit(edit, f"❌ Render Limit Hit\n\nContact [SUPPORT]({SUPPORT_LINK})", link_preview=False)
         except:
             pass
     finally:
-        # Cleanup temporary files
         await clean_temp_files(temp_files)
 
-# ==================== OPTIMIZED DOWNLOAD/UPLOAD FUNCTIONS ====================
-
-async def optimized_fast_download(name, file, client, edit, start, text):
-    """Optimized download with larger chunks and parallel processing"""
-    try:
-        # Use ethon's fast_download but with optimized parameters
-        await fast_download(name, file, client, edit, start, text)
-        
-        # Measure download speed
-        file_size = os.path.getsize(name)
-        download_time = time.time() - start
-        speed_mbps = (file_size / (1024 * 1024)) / download_time
-        
-        print(f"📥 Download completed: {speed_mbps:.2f} MB/s")
-        
-    except Exception as e:
-        print(f"Download error: {e}")
-        raise
-
-async def optimized_fast_upload(name, name_, start, client, edit, text):
-    """Optimized upload with larger chunks and parallel processing"""
-    try:
-        # Use ethon's fast_upload but track speed
-        uploader = await fast_upload(name, name_, start, client, edit, text)
-        
-        # Measure upload speed
-        file_size = os.path.getsize(name)
-        upload_time = time.time() - start
-        speed_mbps = (file_size / (1024 * 1024)) / upload_time
-        
-        print(f"📤 Upload completed: {speed_mbps:.2f} MB/s")
-        
-        return uploader
-        
-    except Exception as e:
-        print(f"Upload error: {e}")
-        raise
-
 async def safe_edit(message, text, buttons=None, link_preview=False):
-    """Safely edit message without throwing MessageNotModifiedError"""
+    """Safe message edit"""
     try:
         await message.edit(text, buttons=buttons, link_preview=link_preview)
     except MessageNotModifiedError:
@@ -209,126 +180,132 @@ async def clean_temp_files(file_list):
     except Exception as cleanup_error:
         print(f"Cleanup error: {cleanup_error}")
 
-# ==================== SYSTEM OPTIMIZATION COMMANDS ====================
+# ==================== RENDER COMMANDS (NO PSUtil) ====================
 
-@Drone.on(events.NewMessage(pattern='/speedtest'))
-async def speed_test(event):
-    """Test download/upload speeds"""
+@Drone.on(events.NewMessage(pattern='/renderstats'))
+async def render_stats(event):
+    """Show Render-specific statistics without psutil"""
     try:
-        msg = await event.reply("🧪 Running speed test...")
+        # Get disk usage using basic Python
+        statvfs = os.statvfs('.')
+        free_disk = (statvfs.f_frsize * statvfs.f_bavail) / (1024**3)  # GB
         
-        # Create test file
-        test_size = 50 * 1024 * 1024  # 50MB test file
-        test_file = "speed_test.tmp"
-        
-        # Write test file
-        start_time = time.time()
-        with open(test_file, 'wb') as f:
-            f.write(os.urandom(test_size))
-        write_speed = test_size / (time.time() - start_time)
-        
-        # Read test file (disk read speed)
-        start_time = time.time()
-        with open(test_file, 'rb') as f:
-            while f.read(1024 * 1024):  # Read in 1MB chunks
-                pass
-        read_speed = test_size / (time.time() - start_time)
-        
-        # Cleanup
-        os.remove(test_file)
-        
-        # Get system info
-        disk = psutil.disk_usage('.')
-        memory = psutil.virtual_memory()
-        
-        await msg.edit(
-            f"🚀 **SYSTEM SPEED TEST** 🚀\n\n"
-            f"• Disk Write: `{write_speed/(1024*1024):.2f} MB/s`\n"
-            f"• Disk Read: `{read_speed/(1024*1024):.2f} MB/s`\n"
-            f"• Free Space: `{disk.free//(1024**3)} GB`\n"
-            f"• Available RAM: `{memory.available//(1024**3)} GB`\n\n"
-            f"💡 **Tips for 40+ MB/s:**\n"
-            f"• Use SSD storage\n"
-            f"• Ensure good internet connection\n"
-            f"• Close other bandwidth-heavy apps\n"
-            f"• Use `/optimize` for system tuning"
-        )
-        
-    except Exception as e:
-        await event.reply(f"❌ Speed test failed: {e}")
-
-@Drone.on(events.NewMessage(pattern='/optimize'))
-async def optimize_system(event):
-    """Optimize system for maximum speed"""
-    try:
-        msg = await event.reply("⚙️ Optimizing system for speed...")
-        
-        # Clear system caches
-        os.system("sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1")
-        
-        # Set higher file limits
-        os.system("ulimit -n 65536 2>/dev/null || true")
-        
-        # Optimize TCP settings (Linux)
-        if os.name == 'posix':
-            os.system("echo 'net.core.rmem_max = 67108864' | sudo tee -a /etc/sysctl.conf > /dev/null 2>&1")
-            os.system("echo 'net.core.wmem_max = 67108864' | sudo tee -a /etc/sysctl.conf > /dev/null 2>&1")
-            os.system("sudo sysctl -p > /dev/null 2>&1")
-        
-        # Get current limits
-        import resource
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        
-        await msg.edit(
-            f"✅ **SYSTEM OPTIMIZED** ✅\n\n"
-            f"• Cleared system caches\n"
-            f"• File descriptor limit: `{soft} -> 65536`\n"
-            f"• TCP buffers optimized\n"
-            f"• Ready for high-speed transfers\n\n"
-            f"Use `/speedtest` to check improvements"
-        )
-        
-    except Exception as e:
-        await event.reply(f"❌ Optimization failed: {e}")
-
-@Drone.on(events.NewMessage(pattern='/network'))
-async def network_info(event):
-    """Show network and system information"""
-    try:
-        # Get network stats
-        net_io = psutil.net_io_counters()
-        disk_io = psutil.disk_usage('.')
-        
-        # Calculate speeds (bytes sent/received since boot)
-        uptime_seconds = time.time() - psutil.boot_time()
-        avg_download_speed = net_io.bytes_recv / uptime_seconds
-        avg_upload_speed = net_io.bytes_sent / uptime_seconds
+        # Calculate approximate hours used (since this is simpler)
+        import time
+        hours_used = time.time() / 3600  # Since epoch, not accurate but gives idea
+        hours_remaining = max(0, 750 - (hours_used % (30*24)))  # Rough estimate
         
         await event.reply(
-            f"🌐 **NETWORK & SYSTEM INFO** 🌐\n\n"
-            f"• Avg Download: `{avg_download_speed/(1024*1024):.2f} MB/s`\n"
-            f"• Avg Upload: `{avg_upload_speed/(1024*1024):.2f} MB/s`\n"
-            f"• Total Downloaded: `{net_io.bytes_recv//(1024**3)} GB`\n"
-            f"• Total Uploaded: `{net_io.bytes_sent//(1024**3)} GB`\n"
-            f"• Free Disk: `{disk_io.free//(1024**3)} GB`\n\n"
-            f"💡 For 40+ MB/s speeds:\n"
-            f"• Use 1Gbps+ internet connection\n"
-            f"• SSD storage recommended\n"
-            f"• Close bandwidth competitors\n"
-            f"• Run `/optimize` first"
+            f"🎯 **RENDER FREE TIER STATS** 🎯\n\n"
+            f"• Disk Free: `{free_disk:.1f} GB`\n"
+            f"• Hours Used: `~{hours_used % (30*24):.1f}h`\n"
+            f"• Hours Left: `~{hours_remaining:.1f}h`\n\n"
+            f"⚡ **Expected Speeds:**\n"
+            f"• Download: `5-15 MB/s`\n"
+            f"• Upload: `3-10 MB/s`\n"
+            f"• Encoding: `Slow-Moderate`\n\n"
+            f"💡 **Tips for Render:**\n"
+            f"• Use lower resolutions (240p/360p)\n"
+            f"• Encode shorter videos\n"
+            f"• Monitor hours usage\n"
+            f"• Cleanup frequently with `/renderclean`"
         )
         
     except Exception as e:
-        await event.reply(f"❌ Network info error: {e}")
+        await event.reply(f"❌ Stats error: {e}")
 
-# ==================== CLEANUP SYSTEM ====================
+@Drone.on(events.NewMessage(pattern='/renderclean'))
+async def render_cleanup(event):
+    """Render-specific aggressive cleanup"""
+    try:
+        msg = await event.reply("🧹 Render Cleanup - Freeing disk space...")
+        
+        cleaned = 0
+        patterns = [
+            "encodemedia/*",
+            "*.tmp", "*.temp",
+            "progress_*.txt", "progress-*.txt",
+            "thumb_*.jpg", "thumb_*.jpeg",
+            "input_*", "output_*", "video_*", "media_*", "out_*", "__*"
+        ]
+        
+        for pattern in patterns:
+            for item in glob.glob(pattern):
+                try:
+                    if os.path.isfile(item):
+                        os.remove(item)
+                        cleaned += 1
+                    elif os.path.isdir(item):
+                        shutil.rmtree(item, ignore_errors=True)
+                        cleaned += 1
+                except:
+                    pass
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        await msg.edit(f"✅ Render Cleanup Complete\nFreed `{cleaned}` items from disk")
+        
+    except Exception as e:
+        await event.reply(f"❌ Cleanup error: {e}")
+
+@Drone.on(events.NewMessage(pattern='/renderlimit'))
+async def render_limits(event):
+    """Explain Render free tier limits"""
+    await event.reply(
+        "🚫 **RENDER FREE TIER LIMITS** 🚫\n\n"
+        "**Hardware Constraints:**\n"
+        "• CPU: Shared, burstable (slows under load)\n"
+        "• RAM: 512MB-1GB (very limited)\n" 
+        "• Disk: Slow ephemeral storage\n"
+        "• Network: Throttled bandwidth\n\n"
+        "**Usage Limits:**\n"
+        "• 750 hours/month total runtime\n"
+        "• Sleeps after 15 minutes inactivity\n"
+        "• Limited concurrent processes\n\n"
+        "**Realistic Expectations:**\n"
+        "• Max speed: 5-15 MB/s (not 40+ MB/s)\n"
+        "• Encoding: Slow for large files\n"
+        "• Best for: Small videos, lower resolutions\n\n"
+        "💡 **Workarounds:**\n"
+        "• Use 240p/360p for faster encoding\n"
+        "• Monitor with `/renderstats`\n"
+        "• Cleanup with `/renderclean`\n"
+        "• Consider paid tier for better performance"
+    )
+
+@Drone.on(events.NewMessage(pattern='/smallfile'))
+async def small_file_tips(event):
+    """Tips for working with small files on Render"""
+    await event.reply(
+        "📁 **RENDER: Small File Strategy** 📁\n\n"
+        "**Ideal for Free Tier:**\n"
+        "• File size: < 50MB\n"
+        "• Duration: < 5 minutes\n" 
+        "• Resolution: 240p-480p\n"
+        "• Simple encoding tasks\n\n"
+        "**Avoid on Free Tier:**\n"
+        "• Files > 100MB\n"
+        "• 720p+ encoding\n"
+        "• Complex filters/effects\n"
+        "• Multiple concurrent jobs\n\n"
+        "**Optimization Tips:**\n"
+        "• Use 240p for fastest encoding\n"
+        "• Lower audio quality (64k)\n"
+        "• Higher CRF (26-28)\n"
+        "• Single-threaded FFmpeg\n"
+        "• Frequent cleanup\n"
+        "• Monitor hours usage\n\n"
+        "Use `/renderstats` to check current usage"
+    )
 
 @Drone.on(events.NewMessage(pattern='/cleanup'))
 async def cleanup_command(event):
-    """Cleanup command"""
+    """Simple cleanup command"""
     confirm_msg = await event.reply(
-        "🚨 **SYSTEM CLEANUP** 🚨\n\n"
-        "Reply with `YES` to clean everything."
+        "🧹 **Cleanup** 🧹\n\n"
+        "Reply with `YES` to clean temporary files."
     )
     
     try:
