@@ -9,7 +9,7 @@ from ethon.telefunc import fast_download, fast_upload
 from ethon.pyfunc import video_metadata
 from LOCAL.localisation import SUPPORT_LINK
 from LOCAL.utils import ffmpeg_progress
-from .. import BOT_UN  # only needed if you want username elsewhere
+from .. import BOT_UN
 
 
 async def encode(event, msg, scale=0):
@@ -99,21 +99,27 @@ async def encode(event, msg, scale=0):
         # Run encoding with progress
         await ffmpeg_progress(cmd, name, progress_file, time.time(), edit, '**ENCODING:**')
 
-        # Prepare thumbnail if exists
-        thumb_path = None
-        thumb = None
-        if getattr(msg, "video", None) and msg.video.thumbs:
-            thumb = msg.video.thumbs[-1]
-        elif hasattr(msg.media, 'document') and msg.media.document.thumbs:
-            thumb = msg.media.document.thumbs[-1]
+        # Get encoded file size for comparison
+        encoded_size = os.path.getsize(output_file)
 
-        if thumb:
-            try:
-                thumb_path = os.path.join(temp_dir, f"thumb_{timestamp}.jpg")
-                thumb_path = await Drone.download_media(thumb, file=thumb_path)
+        # Prepare caption with encoding info
+        encoding_info = f"\n\n💎 Encoded • {scale}p\n📊 {original_size//1024//1024}MB → {encoded_size//1024//1024}MB"
+        final_caption = original_caption + encoding_info if original_caption else encoding_info.strip()
+
+        # FIXED: Thumbnail handling - download from original message
+        thumb_path = None
+        try:
+            # Download thumbnail from the original message
+            thumb_path = os.path.join(temp_dir, f"thumb_{timestamp}.jpg")
+            # Download the thumbnail by specifying the thumbnail size
+            thumb_path = await Drone.download_media(msg, file=thumb_path, thumb=-1)  # -1 for largest thumbnail
+            if thumb_path and os.path.exists(thumb_path):
                 temp_files.append(thumb_path)
-            except Exception:
+            else:
                 thumb_path = None
+        except Exception as e:
+            print(f"Thumbnail download error: {e}")
+            thumb_path = None
 
         # Video attributes for Telegram
         metadata = video_metadata(output_file)
@@ -127,7 +133,7 @@ async def encode(event, msg, scale=0):
         await Drone.send_file(
             event.chat_id,
             uploader,
-            caption=original_caption,  # Use same caption
+            caption=final_caption,
             thumb=thumb_path,
             attributes=attributes,
             force_document=False
