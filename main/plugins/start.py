@@ -1,18 +1,7 @@
-#  This file is part of the VIDEOconvertor distribution.
-#  Copyright (c) 2021 vasusen-code ; All rights reserved. 
-#
-#  This program is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation, version 3.
-#
-#  This program is distributed in the hope that it will be useful, but
-#  WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-#  General Public License for more details.
-#
-#  License can be found in < https://github.com/vasusen-code/VIDEOconvertor/blob/public/LICENSE> .
-
 import os
+import http.server
+import socketserver
+import threading
 from .. import Drone
 from telethon import events, Button
 from LOCAL.localisation import START_TEXT as st
@@ -20,6 +9,28 @@ from LOCAL.localisation import JPG0 as file
 from LOCAL.localisation import info_text, spam_notice, help_text, DEV, source_text, SUPPORT_LINK
 from ethon.teleutils import mention
 from ethon.mystarts import vc_menu
+
+# HTTP Server for Render health checks
+class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b'VIDEOconvertor Bot is running!')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def start_http_server():
+    PORT = 8080
+    with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
+        print(f"HTTP server running on port {PORT}")
+        httpd.serve_forever()
+
+# Start HTTP server in a separate thread
+http_thread = threading.Thread(target=start_http_server, daemon=True)
+http_thread.start()
 
 @Drone.on(events.NewMessage(incoming=True, pattern="/start"))
 async def start(event):
@@ -98,4 +109,3 @@ async def remt(event):
         await event.edit('Removed!')
     except Exception:
         await event.edit("No thumbnail saved.")
-    
